@@ -51,7 +51,25 @@ try {
     Invoke-WinGetChecked 'winget-validate.log' @('validate', '--manifest', $manifestDir, '--disable-interactivity')
     Invoke-WinGetChecked 'winget-settings.log' @('settings', '--enable', 'LocalManifestFiles')
     if (@(Get-AgentEntries).Count -ne 0) { throw 'Runner already has Agents Commander installed' }
-    Invoke-WinGetChecked 'winget-install.log' @('install', '--manifest', $manifestDir, '--scope', 'user', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements')
+    @(
+        Get-ItemProperty 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\*' -ErrorAction SilentlyContinue
+        Get-ItemProperty 'HKLM:\Software\WOW6432Node\Microsoft\EdgeUpdate\Clients\*' -ErrorAction SilentlyContinue
+    ) | Select-Object name, pv, PSChildName | ConvertTo-Json |
+        Set-Content (Join-Path $evidenceDir 'edge-runtimes-before-install.json')
+    $installArguments = @('install', '--manifest', ('"' + $manifestDir + '"'), '--scope', 'user', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', '--verbose-logs')
+    $installProcess = Start-Process -FilePath $wingetPath -ArgumentList $installArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $evidenceDir 'winget-install.log') -RedirectStandardError (Join-Path $evidenceDir 'winget-install-stderr.log')
+    if (-not $installProcess.WaitForExit(240000)) {
+        Get-CimInstance Win32_Process | Where-Object Name -match '^(Agents|agents|winget|MicrosoftEdge|msedge|setup|msiexec)' |
+            Select-Object Name, ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Depth 4 |
+            Set-Content (Join-Path $evidenceDir 'install-timeout-processes.json')
+        Get-Process | Where-Object ProcessName -match '^(Agents|agents|winget|MicrosoftEdge|msedge|setup|msiexec)' |
+            Select-Object ProcessName, Id, MainWindowTitle | ConvertTo-Json |
+            Set-Content (Join-Path $evidenceDir 'install-timeout-windows.json')
+        Stop-Process -Id $installProcess.Id -Force -ErrorAction SilentlyContinue
+        throw 'WinGet installation did not finish within four minutes; diagnostic evidence captured'
+    }
+    Get-Content (Join-Path $evidenceDir 'winget-install.log')
+    if ($installProcess.ExitCode -ne 0) { throw "WinGet installation exited with $($installProcess.ExitCode)" }
 
     $entries = @(Get-AgentEntries)
     $entries | Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, QuietUninstallString, PSChildName |
@@ -61,7 +79,7 @@ try {
     if ($entry.DisplayVersion -ne '0.30.5') { throw "Unexpected installed version: $($entry.DisplayVersion)" }
     if ($entry.Publisher -ne 'AgentsCommander Contributors') { throw "Unexpected publisher: $($entry.Publisher)" }
     if (-not $entry.InstallLocation) { throw 'Installer did not record InstallLocation' }
-    $binaryPath = Join-Path $entry.InstallLocation 'agentscommander.exe'
+    $binaryPath = Join-Path $entry.InstallLocation.Trim('"') 'agentscommander.exe'
     if (-not (Test-Path -LiteralPath $binaryPath)) { throw 'Installed application executable is missing' }
     if ((Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash -ne $binaryHash) {
         throw 'Installed executable does not match the published Windows binary'
@@ -83,5 +101,9 @@ try {
         outcome = 'passed'
     } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidenceDir 'result.json')
 } finally {
+    $wingetDiagnostics = Join-Path $env:LOCALAPPDATA 'Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState/DiagOutputDir'
+    if (Test-Path -LiteralPath $wingetDiagnostics) {
+        Copy-Item -LiteralPath $wingetDiagnostics -Destination (Join-Path $evidenceDir 'winget-diagnostics') -Recurse
+    }
     Stop-Transcript
 }
