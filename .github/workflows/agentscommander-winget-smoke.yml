@@ -1,0 +1,41 @@
+name: Validate AgentsCommander WinGet submission
+
+on:
+  push:
+    branches:
+      - qa/agentscommander-0.30.5
+    paths:
+      - manifests/m/mblua/AgentsCommander/0.30.5/**
+      - .github/workflows/agentscommander-winget-smoke.yml
+      - .github/scripts/agentscommander-winget-smoke.ps1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentscommander-winget-smoke
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            manifests/m/mblua/AgentsCommander/0.30.5
+            .github/scripts
+      - name: Validate, install, inspect, and uninstall the published release
+        shell: pwsh
+        run: ./.github/scripts/agentscommander-winget-smoke.ps1
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentscommander-0.30.5-winget-validation
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
