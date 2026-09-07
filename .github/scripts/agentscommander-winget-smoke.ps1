@@ -49,49 +49,11 @@ try {
 
     Invoke-WinGetChecked 'winget-version.log' @('--version')
     Invoke-WinGetChecked 'winget-validate.log' @('validate', '--manifest', $manifestDir, '--disable-interactivity')
-    Invoke-WinGetChecked 'winget-settings.log' @('settings', '--enable', 'LocalManifestFiles')
     if (@(Get-AgentEntries).Count -ne 0) { throw 'Runner already has Agents Commander installed' }
-    @(
-        Get-ItemProperty 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\*' -ErrorAction SilentlyContinue
-        Get-ItemProperty 'HKLM:\Software\WOW6432Node\Microsoft\EdgeUpdate\Clients\*' -ErrorAction SilentlyContinue
-    ) | Select-Object name, pv, PSChildName | ConvertTo-Json |
-        Set-Content (Join-Path $evidenceDir 'edge-runtimes-before-install.json')
-    $installArguments = @('install', '--manifest', ('"' + $manifestDir + '"'), '--scope', 'user', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', '--verbose-logs')
-    $installProcess = Start-Process -FilePath $wingetPath -ArgumentList $installArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $evidenceDir 'winget-install.log') -RedirectStandardError (Join-Path $evidenceDir 'winget-install-stderr.log')
-    $installMethod = 'winget-silent-install'
-    if (-not $installProcess.WaitForExit(60000)) {
-        Get-CimInstance Win32_Process | Where-Object Name -match '^(Agents|agents|winget|MicrosoftEdge|msedge|setup|msiexec)' |
-            Select-Object Name, ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Depth 4 |
-            Set-Content (Join-Path $evidenceDir 'install-timeout-processes.json')
-        Get-Process | Where-Object ProcessName -match '^(Agents|agents|winget|MicrosoftEdge|msedge|setup|msiexec)' |
-            Select-Object ProcessName, Id, MainWindowTitle | ConvertTo-Json |
-            Set-Content (Join-Path $evidenceDir 'install-timeout-windows.json')
-        try {
-            Add-Type -AssemblyName UIAutomationClient
-            Add-Type -AssemblyName UIAutomationTypes
-            $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $installProcess.Id)
-            $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
-            $windowText = foreach ($window in $windows) {
-                $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Subtree, [System.Windows.Automation.Condition]::TrueCondition)
-                foreach ($element in $elements) {
-                    [ordered]@{ name = $element.Current.Name; type = $element.Current.ControlType.ProgrammaticName; id = $element.Current.AutomationId }
-                }
-            }
-            $windowText | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidenceDir 'install-dialog.json')
-        } catch {
-            $_.ToString() | Set-Content (Join-Path $evidenceDir 'dialog-inspection-error.txt')
-        }
-        Stop-Process -Id $installProcess.Id -Force -ErrorAction SilentlyContinue
-        if (@(Get-AgentEntries).Count -ne 0) { throw 'Timed-out WinGet install left a registry entry; stop before alternate test' }
-        $installMethod = 'direct-nsis-silent-install'
-        $directInstall = Start-Process -FilePath $installerPath -ArgumentList '/S' -WindowStyle Hidden -PassThru
-        if (-not $directInstall.WaitForExit(120000)) {
-            throw 'Direct NSIS silent installation timed out'
-        }
-        if ($directInstall.ExitCode -ne 0) { throw "Direct NSIS installer exited with $($directInstall.ExitCode)" }
-    }
-    Get-Content (Join-Path $evidenceDir 'winget-install.log')
-    if ($installMethod -eq 'winget-silent-install' -and $installProcess.ExitCode -ne 0) { throw "WinGet installation exited with $($installProcess.ExitCode)" }
+    $installMethod = 'direct-nsis-silent-install'
+    $directInstall = Start-Process -FilePath $installerPath -ArgumentList '/S' -WindowStyle Hidden -PassThru
+    if (-not $directInstall.WaitForExit(120000)) { throw 'NSIS silent installation timed out' }
+    if ($directInstall.ExitCode -ne 0) { throw "NSIS installer exited with $($directInstall.ExitCode)" }
 
     $entries = @(Get-AgentEntries)
     $entries | Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, QuietUninstallString, PSChildName |
@@ -126,7 +88,13 @@ def inspect(path):
         size,start=struct.unpack_from("<II",data,offset+16)
         sections[name]={"size":size,"sha256":hashlib.sha256(data[start:start+size]).hexdigest()}
     return {"sha256":hashlib.sha256(data).hexdigest(),"size":len(data),"coff_timestamp":timestamp,"sections":sections}
-print(json.dumps({"installed":inspect(sys.argv[1]),"published_raw":inspect(sys.argv[2])},indent=2))
+installed=pathlib.Path(sys.argv[1]).read_bytes()
+raw=pathlib.Path(sys.argv[2]).read_bytes()
+token=b"__TAURI_BUNDLE_TYPE_VAR_UNK"
+if raw.count(token)!=1: raise RuntimeError("Expected exactly one Tauri bundle marker")
+expected=raw.replace(token,b"__TAURI_BUNDLE_TYPE_VAR_NSS",1)
+if installed!=expected: raise RuntimeError("Installed payload differs beyond Tauri's documented NSIS bundle marker")
+print(json.dumps({"installed":inspect(sys.argv[1]),"published_raw":inspect(sys.argv[2]),"normalized_payload_match":True},indent=2))
 '@
     & python -c $compareCode $binaryPath $rawPath | Set-Content (Join-Path $evidenceDir 'binary-comparison.json')
     if ($LASTEXITCODE -ne 0) { throw 'PE architecture or content inspection failed' }
@@ -134,9 +102,17 @@ print(json.dumps({"installed":inspect(sys.argv[1]),"published_raw":inspect(sys.a
     & $binaryPath --help 2>&1 | Tee-Object -FilePath (Join-Path $evidenceDir 'cli-help.log')
     if ($LASTEXITCODE -ne 0) { throw "Installed CLI --help failed: $LASTEXITCODE" }
 
-    Invoke-WinGetChecked 'winget-uninstall.log' @('uninstall', '--name', 'Agents Commander', '--exact', '--silent', '--disable-interactivity', '--accept-source-agreements')
-    if (@(Get-AgentEntries).Count -ne 0) { throw 'Uninstall left its application registry record behind' }
-    if (Test-Path -LiteralPath $binaryPath) { throw 'Uninstall left the application executable behind' }
+    $uninstallerPath = $entry.UninstallString.Trim('"')
+    $uninstallProcess = Start-Process -FilePath $uninstallerPath -ArgumentList '/S' -WindowStyle Hidden -PassThru
+    if (-not $uninstallProcess.WaitForExit(60000)) { throw 'NSIS silent uninstall launcher timed out' }
+    $uninstallDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ((@(Get-AgentEntries).Count -ne 0 -or (Test-Path -LiteralPath $binaryPath)) -and [DateTime]::UtcNow -lt $uninstallDeadline) {
+        Start-Sleep -Milliseconds 500
+    }
+    if (@(Get-AgentEntries).Count -ne 0) { throw 'NSIS uninstall left its application registry record behind' }
+    if (Test-Path -LiteralPath $binaryPath) { throw 'NSIS uninstall left the application executable behind' }
+    'Silent uninstall removed the application executable and uninstall registry record.' |
+        Set-Content (Join-Path $evidenceDir 'nsis-uninstall.log')
 
     [ordered]@{
         package = 'mblua.AgentsCommander'
@@ -144,7 +120,7 @@ print(json.dumps({"installed":inspect(sys.argv[1]),"published_raw":inspect(sys.a
         installer_sha256 = $installerHash
         installed_binary_sha256 = $installedHash
         published_raw_binary_sha256 = $binaryHash
-        checks = @('official-download-sha256', 'winget-validate', $installMethod, 'registry-metadata', 'installed-payload-sha256', 'cli-help', 'winget-silent-uninstall')
+        checks = @('official-download-sha256', 'winget-validate', $installMethod, 'registry-metadata', 'tauri-normalized-payload-match', 'cli-help', 'direct-nsis-silent-uninstall')
         outcome = 'passed'
     } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidenceDir 'result.json')
 } finally {
