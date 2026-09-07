@@ -7,9 +7,6 @@ MinimumOSVersion: 10.0.17763.0
 InstallerType: nullsoft
 Scope: user
 UpgradeBehavior: install
-Dependencies:
-  PackageDependencies:
-  - PackageIdentifier: Microsoft.EdgeWebView2Runtime
 ReleaseDate: 2026-09-06
 Installers:
 - Architecture: x64

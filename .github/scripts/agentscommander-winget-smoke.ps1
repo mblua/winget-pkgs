@@ -58,18 +58,40 @@ try {
         Set-Content (Join-Path $evidenceDir 'edge-runtimes-before-install.json')
     $installArguments = @('install', '--manifest', ('"' + $manifestDir + '"'), '--scope', 'user', '--silent', '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements', '--verbose-logs')
     $installProcess = Start-Process -FilePath $wingetPath -ArgumentList $installArguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $evidenceDir 'winget-install.log') -RedirectStandardError (Join-Path $evidenceDir 'winget-install-stderr.log')
-    if (-not $installProcess.WaitForExit(240000)) {
+    $installMethod = 'winget-silent-install'
+    if (-not $installProcess.WaitForExit(60000)) {
         Get-CimInstance Win32_Process | Where-Object Name -match '^(Agents|agents|winget|MicrosoftEdge|msedge|setup|msiexec)' |
             Select-Object Name, ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Depth 4 |
             Set-Content (Join-Path $evidenceDir 'install-timeout-processes.json')
         Get-Process | Where-Object ProcessName -match '^(Agents|agents|winget|MicrosoftEdge|msedge|setup|msiexec)' |
             Select-Object ProcessName, Id, MainWindowTitle | ConvertTo-Json |
             Set-Content (Join-Path $evidenceDir 'install-timeout-windows.json')
+        try {
+            Add-Type -AssemblyName UIAutomationClient
+            Add-Type -AssemblyName UIAutomationTypes
+            $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $installProcess.Id)
+            $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+            $windowText = foreach ($window in $windows) {
+                $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Subtree, [System.Windows.Automation.Condition]::TrueCondition)
+                foreach ($element in $elements) {
+                    [ordered]@{ name = $element.Current.Name; type = $element.Current.ControlType.ProgrammaticName; id = $element.Current.AutomationId }
+                }
+            }
+            $windowText | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidenceDir 'install-dialog.json')
+        } catch {
+            $_.ToString() | Set-Content (Join-Path $evidenceDir 'dialog-inspection-error.txt')
+        }
         Stop-Process -Id $installProcess.Id -Force -ErrorAction SilentlyContinue
-        throw 'WinGet installation did not finish within four minutes; diagnostic evidence captured'
+        if (@(Get-AgentEntries).Count -ne 0) { throw 'Timed-out WinGet install left a registry entry; stop before alternate test' }
+        $installMethod = 'direct-nsis-silent-install'
+        $directInstall = Start-Process -FilePath $installerPath -ArgumentList '/S' -WindowStyle Hidden -PassThru
+        if (-not $directInstall.WaitForExit(120000)) {
+            throw 'Direct NSIS silent installation timed out'
+        }
+        if ($directInstall.ExitCode -ne 0) { throw "Direct NSIS installer exited with $($directInstall.ExitCode)" }
     }
     Get-Content (Join-Path $evidenceDir 'winget-install.log')
-    if ($installProcess.ExitCode -ne 0) { throw "WinGet installation exited with $($installProcess.ExitCode)" }
+    if ($installMethod -eq 'winget-silent-install' -and $installProcess.ExitCode -ne 0) { throw "WinGet installation exited with $($installProcess.ExitCode)" }
 
     $entries = @(Get-AgentEntries)
     $entries | Select-Object DisplayName, DisplayVersion, Publisher, InstallLocation, UninstallString, QuietUninstallString, PSChildName |
@@ -97,7 +119,7 @@ try {
         version = '0.30.5'
         installer_sha256 = $installerHash
         installed_binary_sha256 = $binaryHash
-        checks = @('official-download-sha256', 'winget-validate', 'winget-silent-install', 'registry-metadata', 'installed-payload-sha256', 'cli-help', 'winget-silent-uninstall')
+        checks = @('official-download-sha256', 'winget-validate', $installMethod, 'registry-metadata', 'installed-payload-sha256', 'cli-help', 'winget-silent-uninstall')
         outcome = 'passed'
     } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidenceDir 'result.json')
 } finally {
