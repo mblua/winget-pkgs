@@ -17,17 +17,20 @@ try {
         Select-Object CompanyName, ProductName, ProductVersion, FileVersion, OriginalFilename |
         ConvertTo-Json | Set-Content (Join-Path $evidenceDir 'installer-version.json')
 
-    Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery
-    Import-Module Microsoft.WinGet.Client
-    Repair-WinGetPackageManager -AllUsers -Version '1.29.290' -Force
-    $wingetCommand = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($wingetCommand) {
-        $wingetPath = $wingetCommand.Source
-    } else {
-        $appInstaller = Get-AppxPackage -Name Microsoft.DesktopAppInstaller | Select-Object -First 1
-        if (-not $appInstaller) { throw 'WinGet was not registered after bootstrap' }
-        $wingetPath = Join-Path $appInstaller.InstallLocation 'winget.exe'
-    }
+    $wingetRelease = 'https://github.com/microsoft/winget-cli/releases/download/v1.29.290'
+    $bundlePath = Join-Path $env:RUNNER_TEMP 'WinGet.msixbundle'
+    $dependenciesZip = Join-Path $env:RUNNER_TEMP 'WinGet-dependencies.zip'
+    $dependenciesDir = Join-Path $env:RUNNER_TEMP 'WinGet-dependencies'
+    Invoke-WebRequest -Uri "$wingetRelease/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" -OutFile $bundlePath
+    Invoke-WebRequest -Uri "$wingetRelease/DesktopAppInstaller_Dependencies.zip" -OutFile $dependenciesZip
+    Expand-Archive -LiteralPath $dependenciesZip -DestinationPath $dependenciesDir
+    $dependencyPaths = @(Get-ChildItem -LiteralPath (Join-Path $dependenciesDir 'x64') -File -Recurse |
+        Where-Object Extension -in @('.appx', '.msix') | Select-Object -ExpandProperty FullName)
+    if ($dependencyPaths.Count -eq 0) { throw 'Official WinGet release has no x64 dependency packages' }
+    Add-AppxPackage -Path $bundlePath -DependencyPath $dependencyPaths -ForceApplicationShutdown
+    $appInstaller = Get-AppxPackage -Name Microsoft.DesktopAppInstaller | Select-Object -First 1
+    if (-not $appInstaller) { throw 'WinGet was not registered after bootstrap' }
+    $wingetPath = Join-Path $appInstaller.InstallLocation 'winget.exe'
 
     function Invoke-WinGetChecked {
         param([string]$LogName, [string[]]$Arguments)
