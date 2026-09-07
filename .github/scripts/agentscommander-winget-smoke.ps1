@@ -17,11 +17,9 @@ try {
         Select-Object CompanyName, ProductName, ProductVersion, FileVersion, OriginalFilename |
         ConvertTo-Json | Set-Content (Join-Path $evidenceDir 'installer-version.json')
 
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery
-        Import-Module Microsoft.WinGet.Client
-        Repair-WinGetPackageManager -AllUsers
-    }
+    Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery
+    Import-Module Microsoft.WinGet.Client
+    Repair-WinGetPackageManager -AllUsers -Version '1.29.290' -Force
     $wingetCommand = Get-Command winget.exe -ErrorAction SilentlyContinue
     if ($wingetCommand) {
         $wingetPath = $wingetCommand.Source
