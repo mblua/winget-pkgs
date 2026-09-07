@@ -103,9 +103,33 @@ try {
     if (-not $entry.InstallLocation) { throw 'Installer did not record InstallLocation' }
     $binaryPath = Join-Path $entry.InstallLocation.Trim('"') 'agentscommander.exe'
     if (-not (Test-Path -LiteralPath $binaryPath)) { throw 'Installed application executable is missing' }
-    if ((Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash -ne $binaryHash) {
-        throw 'Installed executable does not match the published Windows binary'
-    }
+    $installedHash = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash
+    $installedVersion = (Get-Item -LiteralPath $binaryPath).VersionInfo
+    $installedVersion | Select-Object ProductName, ProductVersion, FileVersion |
+        ConvertTo-Json | Set-Content (Join-Path $evidenceDir 'installed-version.json')
+    if ($installedVersion.ProductVersion -notmatch '^0\.30\.5(?:$|\.)') { throw 'Installed executable has an unexpected product version' }
+    $rawPath = Join-Path $env:RUNNER_TEMP 'agentscommander-published-raw.exe'
+    Invoke-WebRequest -Uri 'https://github.com/mblua/AgentsCommander/releases/download/v0.30.5/agentscommander-windows-x86_64.exe' -OutFile $rawPath
+    if ((Get-FileHash -LiteralPath $rawPath -Algorithm SHA256).Hash -ne $binaryHash) { throw 'Published raw executable checksum mismatch' }
+    $compareCode = @'
+import hashlib, json, pathlib, struct, sys
+def inspect(path):
+    data=pathlib.Path(path).read_bytes()
+    pe=struct.unpack_from("<I",data,0x3c)[0]
+    machine,count,timestamp=struct.unpack_from("<HHI",data,pe+4)
+    if machine!=0x8664: raise RuntimeError("Expected an x64 application executable")
+    opt=struct.unpack_from("<H",data,pe+20)[0]
+    sections={}
+    for i in range(count):
+        offset=pe+24+opt+i*40
+        name=data[offset:offset+8].rstrip(b"\0").decode("ascii")
+        size,start=struct.unpack_from("<II",data,offset+16)
+        sections[name]={"size":size,"sha256":hashlib.sha256(data[start:start+size]).hexdigest()}
+    return {"sha256":hashlib.sha256(data).hexdigest(),"size":len(data),"coff_timestamp":timestamp,"sections":sections}
+print(json.dumps({"installed":inspect(sys.argv[1]),"published_raw":inspect(sys.argv[2])},indent=2))
+'@
+    & python -c $compareCode $binaryPath $rawPath | Set-Content (Join-Path $evidenceDir 'binary-comparison.json')
+    if ($LASTEXITCODE -ne 0) { throw 'PE architecture or content inspection failed' }
 
     & $binaryPath --help 2>&1 | Tee-Object -FilePath (Join-Path $evidenceDir 'cli-help.log')
     if ($LASTEXITCODE -ne 0) { throw "Installed CLI --help failed: $LASTEXITCODE" }
@@ -118,7 +142,8 @@ try {
         package = 'mblua.AgentsCommander'
         version = '0.30.5'
         installer_sha256 = $installerHash
-        installed_binary_sha256 = $binaryHash
+        installed_binary_sha256 = $installedHash
+        published_raw_binary_sha256 = $binaryHash
         checks = @('official-download-sha256', 'winget-validate', $installMethod, 'registry-metadata', 'installed-payload-sha256', 'cli-help', 'winget-silent-uninstall')
         outcome = 'passed'
     } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidenceDir 'result.json')
