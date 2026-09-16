@@ -7,7 +7,7 @@ try {
     $manifestDir = Join-Path $env:GITHUB_WORKSPACE 'manifests/m/mblua/AgentsCommander/0.34.0'
     $installerUrl = 'https://github.com/mblua/AgentsCommander/releases/download/v0.34.0/Agents.Commander_0.34.0_x64-setup.exe'
     $installerHash = 'CB692E41CB3CF761E5CDD71E16BF19EE2751D4B079B03FFF171FDE83D2DF8C0B'
-    $binaryHash = 'E66DC320CE27B3DE5A085E7E7453E85D1E4931E07EF9AC7B048D18FD1BE33A27'
+    $binaryHash = '65DF5A18D37856230912B01FBBC625EA6AF88FB126CEFDA12790486793215BD9'
     $installerPath = Join-Path $env:RUNNER_TEMP 'Agents.Commander_0.34.0_x64-setup.exe'
     Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
     if ((Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash -ne $installerHash) {
