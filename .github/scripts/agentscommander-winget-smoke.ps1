@@ -69,7 +69,7 @@ try {
     $installedVersion = (Get-Item -LiteralPath $binaryPath).VersionInfo
     $installedVersion | Select-Object ProductName, ProductVersion, FileVersion |
         ConvertTo-Json | Set-Content (Join-Path $evidenceDir 'installed-version.json')
-    if ($installedVersion.ProductVersion -notmatch '^0.39.0(?:$|\.)') { throw 'Installed executable has an unexpected product version' }
+    if ($installedVersion.ProductVersion -notmatch '^0\.39\.0(?:$|\.)') { throw 'Installed executable has an unexpected product version' }
     $rawPath = Join-Path $env:RUNNER_TEMP 'agentscommander-published-raw.exe'
     Invoke-WebRequest -Uri 'https://github.com/mblua/AgentsCommander/releases/download/v0.39.0/agentscommander-windows-x86_64.exe' -OutFile $rawPath
     if ((Get-FileHash -LiteralPath $rawPath -Algorithm SHA256).Hash -ne $binaryHash) { throw 'Published raw executable checksum mismatch' }
