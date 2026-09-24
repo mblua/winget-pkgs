@@ -5,7 +5,7 @@ on:
     branches:
       - qa/agentscommander-0.30.5
     paths:
-      - manifests/m/mblua/AgentsCommander/0.34.0/**
+      - manifests/m/mblua/AgentsCommander/0.39.0/**
       - .github/workflows/agentscommander-winget-smoke.yml
       - .github/scripts/agentscommander-winget-smoke.ps1
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
-            manifests/m/mblua/AgentsCommander/0.34.0
+            manifests/m/mblua/AgentsCommander/0.39.0
             .github/scripts
       - name: Validate, install, inspect, and uninstall the published release
         shell: pwsh
@@ -35,7 +35,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: agentscommander-0.34.0-winget-validation
+          name: agentscommander-0.39.0-winget-validation
           path: evidence/
           if-no-files-found: error
           retention-days: 14

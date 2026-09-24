@@ -4,11 +4,11 @@ $evidenceDir = Join-Path $env:GITHUB_WORKSPACE 'evidence'
 New-Item -ItemType Directory -Path $evidenceDir -Force | Out-Null
 Start-Transcript -Path (Join-Path $evidenceDir 'transcript.txt')
 try {
-    $manifestDir = Join-Path $env:GITHUB_WORKSPACE 'manifests/m/mblua/AgentsCommander/0.34.0'
-    $installerUrl = 'https://github.com/mblua/AgentsCommander/releases/download/v0.34.0/Agents.Commander_0.34.0_x64-setup.exe'
-    $installerHash = 'CB692E41CB3CF761E5CDD71E16BF19EE2751D4B079B03FFF171FDE83D2DF8C0B'
-    $binaryHash = '65DF5A18D37856230912B01FBBC625EA6AF88FB126CEFDA12790486793215BD9'
-    $installerPath = Join-Path $env:RUNNER_TEMP 'Agents.Commander_0.34.0_x64-setup.exe'
+    $manifestDir = Join-Path $env:GITHUB_WORKSPACE 'manifests/m/mblua/AgentsCommander/0.39.0'
+    $installerUrl = 'https://github.com/mblua/AgentsCommander/releases/download/v0.39.0/Agents.Commander_0.39.0_x64-setup.exe'
+    $installerHash = '66740432355BB6CB37A0E4667D0A3B4460E4C28665456D531A76589E4081DF86'
+    $binaryHash = '9D39952A99F663453357030B920DE93348554EA15FBBB2F7BB9863E0C8C3B4FC'
+    $installerPath = Join-Path $env:RUNNER_TEMP 'Agents.Commander_0.39.0_x64-setup.exe'
     Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
     if ((Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash -ne $installerHash) {
         throw 'Published installer checksum mismatch'
@@ -60,7 +60,7 @@ try {
         ConvertTo-Json -Depth 4 | Set-Content (Join-Path $evidenceDir 'installed-registry.json')
     if ($entries.Count -ne 1) { throw "Expected one uninstall record, got $($entries.Count)" }
     $entry = $entries[0]
-    if ($entry.DisplayVersion -ne '0.34.0') { throw "Unexpected installed version: $($entry.DisplayVersion)" }
+    if ($entry.DisplayVersion -ne '0.39.0') { throw "Unexpected installed version: $($entry.DisplayVersion)" }
     if ($entry.Publisher -ne 'AgentsCommander Contributors') { throw "Unexpected publisher: $($entry.Publisher)" }
     if (-not $entry.InstallLocation) { throw 'Installer did not record InstallLocation' }
     $binaryPath = Join-Path $entry.InstallLocation.Trim('"') 'agentscommander.exe'
@@ -71,7 +71,7 @@ try {
         ConvertTo-Json | Set-Content (Join-Path $evidenceDir 'installed-version.json')
     if ($installedVersion.ProductVersion -notmatch '^0\.34\.0(?:$|\.)') { throw 'Installed executable has an unexpected product version' }
     $rawPath = Join-Path $env:RUNNER_TEMP 'agentscommander-published-raw.exe'
-    Invoke-WebRequest -Uri 'https://github.com/mblua/AgentsCommander/releases/download/v0.34.0/agentscommander-windows-x86_64.exe' -OutFile $rawPath
+    Invoke-WebRequest -Uri 'https://github.com/mblua/AgentsCommander/releases/download/v0.39.0/agentscommander-windows-x86_64.exe' -OutFile $rawPath
     if ((Get-FileHash -LiteralPath $rawPath -Algorithm SHA256).Hash -ne $binaryHash) { throw 'Published raw executable checksum mismatch' }
     $compareCode = @'
 import hashlib, json, pathlib, struct, sys
@@ -116,7 +116,7 @@ print(json.dumps({"installed":inspect(sys.argv[1]),"published_raw":inspect(sys.a
 
     [ordered]@{
         package = 'mblua.AgentsCommander'
-        version = '0.34.0'
+        version = '0.39.0'
         installer_sha256 = $installerHash
         installed_binary_sha256 = $installedHash
         published_raw_binary_sha256 = $binaryHash
